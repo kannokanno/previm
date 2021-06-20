@@ -8,6 +8,11 @@ set cpo&vim
 let s:File = vital#previm#import('System.File')
 
 let s:newline_character = "\n"
+let s:bookdir = "_build"
+let s:bookroot = ""
+let s:linkeddir = "_linked"
+let s:linkedroot = ""
+let s:local_mdfiles = []
 
 function! previm#open(preview_html_file) abort
   call previm#refresh()
@@ -38,8 +43,265 @@ function! previm#open(preview_html_file) abort
   endif
 endfunction
 
+function! previm#open1() abort
+  let b:refresh_mode = 1
+  let s:bookroot = ""
+  let s:linkedroot = ""
+  call previm#open(previm#make_preview_file_path('index.html'))
+endfunction
+
+function! previm#open2() abort
+  let b:refresh_mode = 2
+  let s:bookroot = ""
+  let s:linkedroot = ""
+  if !isdirectory(s:preview_base_directory() . '_')
+    call s:File.copy_dir(s:base_dir . 'local_', s:preview_directory())
+  endif
+  call previm#open(previm#make_preview_file_path('index.html'))
+endfunction
+
+function! previm#book() abort
+  let b:refresh_mode = 3
+  let s:linkedroot = ""
+  let s:bookroot = s:rootpath()
+  let l:bookdir = "/" . s:bookdir
+  if !isdirectory(s:bookroot . l:bookdir)
+    call s:File.copy_dir(s:base_dir . 'book_', s:bookroot . l:bookdir)
+  endif
+  call s:book_nodes(s:bookroot)
+  call previm#open(s:bookroot . l:bookdir . '/index.html')
+endfunction
+
+function! previm#linked() abort
+  let b:refresh_mode = 4
+  let s:bookroot = ""
+  let s:linkedroot = s:rootpath()
+  let l:linkeddir = "/" . s:linkeddir
+  if !isdirectory(s:linkedroot . l:linkeddir)
+    call s:File.copy_dir(s:base_dir . 'linked_', s:linkedroot . l:linkeddir)
+  endif
+  let l:todolist = [fnamemodify(expand('%:p'), ':p')]
+  let l:donelist = []
+  " create directory for js files
+  if !isdirectory(s:linkedroot . "/" . s:linkeddir . "/js/out/")
+    call mkdir(s:linkedroot . "/" . s:linkeddir . "/js/out/", 'p')
+  endif
+  " create js/previm-function.js
+  let l:item = s:regular_filepath(l:todolist[0])
+  let l:targetfile = sha256(l:item)[:15] . ".js"
+  let l:encoded_lines = split(iconv(s:linked_default_template(l:targetfile), &encoding, 'utf-8'), s:newline_character)
+  call writefile(encoded_lines, s:linkedroot . "/" . s:linkeddir . "/js/previm-function.js")
+  " generate js files
+  while len(l:todolist) > 0
+    let l:curfile = remove(l:todolist, 0)
+    call add(l:donelist, l:curfile)
+    call s:linked_nodes(s:linkedroot, l:curfile)
+    for l:item in s:local_mdfiles
+      if index(l:donelist, l:item) < 0
+        call add(l:todolist, l:item)
+      endif 
+    endfor
+  endwhile
+  call previm#open(s:linkedroot . l:linkeddir . '/index.html')
+endfunction
+
+function! previm#patchdir() abort
+  let l:previm_mode = get(b:, 'refresh_mode', 0)
+  if l:previm_mode == 2
+    let l:rootdir = s:preview_directory()
+  elseif s:bookroot != ""
+    let l:rootdir = s:bookroot . "/" . s:bookdir
+  elseif s:linkedroot != ""
+    let l:rootdir = s:linkedroot . "/" . s:linkeddir
+  else
+    let l:rootdir = ''
+  endif
+  let l:setting = substitute(input("Custom setting file: ", l:rootdir, "file"), '\', '/', 'g')
+  let l:rootdir = substitute(input("Root dir: ", l:rootdir, "dir"), '\', '/', 'g')
+  if isdirectory(l:rootdir) && filereadable(l:setting)
+    if strpart(l:rootdir, len(l:rootdir) - 1) != '/'
+      let l:rootdir = l:rootdir . '/'
+    endif
+    let l:pat01 = '===================='
+    let l:pat02 = '--------------------'
+    let l:file1 = l:rootdir . 'index.html'
+    let l:file2 = l:rootdir . 'js/previm.js'
+    let l:pat11 = '<!-- Custom JS Start -->'
+    let l:pat12 = '<!-- Custom JS End -->'
+    let l:pat21 = '/* markdownitContainer Start */'
+    let l:pat22 = '/* markdownitContainer End */'
+    let l:pat23 = '/* Custom Render Start */'
+    let l:pat24 = '/* Custom Render End */'
+    let l:lines = readfile(l:setting)
+    let l:pos1 = index(l:lines, l:pat01)
+    let l:pos2 = index(l:lines, l:pat02)
+    let l:replace22 = remove(l:lines, l:pos2 + 1, len(l:lines) - 1)
+    let l:replace21 = remove(l:lines, l:pos1 + 1, l:pos2 - 1)
+    let l:replace11 = remove(l:lines, 0, l:pos1 - 1)
+
+    let l:lines = readfile(l:file1)
+    let l:pos1 = index(l:lines, l:pat11)
+    let l:pos2 = index(l:lines, l:pat12)
+    if (l:pos1 >= 0) && (l:pos2 >= 0)
+      if l:pos2 - l:pos1 > 1
+        call remove(l:lines, l:pos1 + 1, l:pos2 - 1)
+      endif
+      let l:pos2 = l:pos1 + 1
+      for l:item in l:replace11
+        call insert(l:lines, l:item, l:pos2)
+        let l:pos2 = l:pos2 + 1
+      endfor
+      call writefile(l:lines, l:file1)
+    endif
+
+    let l:lines = readfile(l:file2)
+    let l:pos1 = index(l:lines, l:pat23)
+    let l:pos2 = index(l:lines, l:pat24)
+    if (l:pos1 >= 0) && (l:pos2 >= 0)
+      if l:pos2 - l:pos1 > 1
+        call remove(l:lines, l:pos1 + 1, l:pos2 - 1)
+      endif
+      let l:pos2 = l:pos1 + 1
+      for l:item in l:replace22
+        call insert(l:lines, l:item, l:pos2)
+        let l:pos2 = l:pos2 + 1
+      endfor
+    endif
+    let l:pos1 = index(l:lines, l:pat21)
+    let l:pos2 = index(l:lines, l:pat22)
+    if (l:pos1 >= 0) && (l:pos2 >= 0)
+      if l:pos2 - l:pos1 > 1
+        call remove(l:lines, l:pos1 + 1, l:pos2 - 1)
+      endif
+      let l:pos2 = l:pos1 + 1
+      for l:item in l:replace21
+        call insert(l:lines, l:item, l:pos2)
+        let l:pos2 = l:pos2 + 1
+      endfor
+    endif
+    call writefile(l:lines, l:file2)
+  endif
+endfunction
+
+function! s:book_nodes(root) abort
+  let l:bookdir = "/" . s:bookdir
+  let l:contentpath = "js/out/"
+  let l:filelist = globpath(a:root, "**/*.{markdown,mdown,mkd,mkdn,mdwn,md,rst}", 0, 1)
+  let l:skiplen = strlen(a:root) + 1
+  let l:sep = strpart(l:filelist[0], l:skiplen-1, 1)
+  let l:idx = 1
+  let l:basedirs = []
+  let l:outtxt = ["const treenodes = ["]
+  if !isdirectory(a:root . l:bookdir . "/" . l:contentpath)
+    call mkdir(a:root . l:bookdir . "/" . l:contentpath, 'p')
+  endif
+  for l:item in l:filelist
+    let l:item = s:regular_filepath(l:item)
+    let l:relitem = strpart(l:item, l:skiplen)
+    let l:parts = split(l:relitem, '/')
+    if len(l:parts) > 1
+        if l:parts[0] == s:bookdir
+            continue
+        elseif strpart(l:parts[0], 0, 1) == '_'
+            continue
+        endif
+    endif
+    let l:j = 0
+    let l:fprefix = 0
+    while l:j < len(l:parts) - 1
+        if l:fprefix == 0
+            if l:j >= len(l:basedirs)
+                let l:fprefix = 1
+                call add(l:outtxt, repeat("  ", l:j+1) . "{ id: " . l:idx . ", name: '" . l:parts[l:j] . "', children: [")
+                let l:idx = l:idx + 1
+            else
+                if l:basedirs[l:j] != l:parts[l:j]
+                    let l:fprefix = 1
+                    let l:k = len(l:basedirs)
+                    while l:k > l:j
+                        call add(l:outtxt, repeat("  ", l:k+1) . "],")
+                        let l:k = l:k - 1
+                        call add(l:outtxt, repeat("  ", l:k+1) . "},")
+                    endwhile
+                    call add(l:outtxt, repeat("  ", l:j+1) . "{ id: " . l:idx . ", name: '" . l:parts[l:j] . "', children: [")
+                    let l:idx = l:idx + 1
+                endif
+            endif
+        else
+            call add(l:outtxt, repeat("  ", l:j+1) . "{ id: " . l:idx . ", name: '" . l:parts[l:j] . "', children: [")
+            let l:idx = l:idx + 1
+        endif
+        let l:j = l:j + 1
+    endwhile
+    if len(l:parts) <= 1
+      if len(l:basedirs) > 0
+        let l:k = len(l:basedirs)
+        while l:k > 0
+            call add(l:outtxt, repeat("  ", l:k+1) . "],")
+            let l:k = l:k - 1
+            call add(l:outtxt, repeat("  ", l:k+1) . "},")
+        endwhile
+        let l:basedirs = copy(l:parts)
+        call remove(l:basedirs, -1)
+      endif
+    else
+      if l:fprefix > 0
+          let l:basedirs = copy(l:parts)
+          call remove(l:basedirs, -1)
+      endif
+    endif
+    let l:targetfile = l:contentpath . sha256(l:relitem)[:15] . ".js"
+    call add(l:outtxt, repeat("  ", l:j+1) . "{ id: " . l:idx . ", name: '" . l:parts[l:j] . "', doc: '" . l:targetfile . "' },")
+    if getftime(l:item) > getftime(a:root . l:bookdir . "/" . l:targetfile)
+        if bufexists(l:item)
+            silent! exe "b " . bufnr(l:item)
+            let l:encoded_lines = split(iconv(s:function_template(), &encoding, 'utf-8'), s:newline_character)
+            call writefile(encoded_lines, a:root . l:bookdir . "/" . l:targetfile)
+        else
+            silent! exe "edit ". l:item
+            let l:encoded_lines = split(iconv(s:function_template(), &encoding, 'utf-8'), s:newline_character)
+            call writefile(encoded_lines, a:root . l:bookdir . "/" . l:targetfile)
+            silent! exe "bdelete"
+        endif
+    endif
+    let l:idx = l:idx + 1
+  endfor
+  let l:k = len(l:basedirs)
+  while l:k > 0
+      call add(l:outtxt, repeat("  ", l:k+1) . "],")
+      let l:k = l:k - 1
+      call add(l:outtxt, repeat("  ", l:k+1) . "},")
+  endwhile
+  call add(l:outtxt, "]")
+  call writefile(l:outtxt, a:root . l:bookdir . "/" . l:contentpath . "nodes.js")
+endfunction
+
+function! s:linked_nodes(root, filepath) abort
+  let l:linkeddir = "/" . s:linkeddir
+  let l:contentpath = "js/out/"
+  let l:item = s:regular_filepath(a:filepath)
+  let l:targetfile = l:contentpath . sha256(l:item)[:15] . ".js"
+  if getftime(l:item) > getftime(a:root . l:linkeddir . "/" . l:targetfile)
+      if bufexists(l:item)
+          silent! exe "b " . bufnr(l:item)
+          let l:encoded_lines = split(iconv(s:function_template(), &encoding, 'utf-8'), s:newline_character)
+          call writefile(encoded_lines, a:root . l:linkeddir . "/" . l:targetfile)
+      else
+          silent! exe "edit ". l:item
+          let l:encoded_lines = split(iconv(s:function_template(), &encoding, 'utf-8'), s:newline_character)
+          call writefile(encoded_lines, a:root . l:linkeddir . "/" . l:targetfile)
+          silent! exe "bdelete"
+      endif
+  endif
+endfunction
+
 function! s:exists_openbrowser() abort
   try
+    if get(g:, 'spacevim_plugin_manager', '') ==# 'dein'
+      if get(dein#get('open-browser.vim'), 'sourced', 0) == 0
+        call dein#source('open-browser.vim')
+      endif
+    endif
     call openbrowser#load()
     return 1
   catch /E117.*/
@@ -58,20 +320,62 @@ function! s:apply_openbrowser(path) abort
 endfunction
 
 function! previm#refresh() abort
-  call previm#refresh_css()
-  call previm#refresh_js()
+  let l:previm_mode = get(b:, 'refresh_mode', 0)
+  if (l:previm_mode == 0) && (s:bookroot != "")
+    let l:rootpath = s:rootpath()
+    if s:bookroot == l:rootpath
+      let b:refresh_mode = 3
+      let l:previm_mode = 3
+    elseif s:linkedroot == l:rootpath
+      let b:refresh_mode = 4
+      let l:previm_mode = 4
+    endif
+  endif
+  if (l:previm_mode <= 2) && (l:previm_mode >= 1)
+    call previm#refresh_css()
+    call previm#refresh_js()
+  elseif l:previm_mode == 3
+    let l:bookdir = "/" . s:bookdir
+    let l:contentpath = "js/out/"
+    let l:skiplen = strlen(s:bookroot) + 1
+    let l:sep = "/"
+    let l:item = expand("%:p")
+    let l:item = s:regular_filepath(l:item)
+    let l:relitem = strpart(l:item, l:skiplen)
+    let l:targetfile = l:contentpath . sha256(l:relitem)[:15] . ".js"
+    if filereadable(s:bookroot . l:bookdir . "/" . l:targetfile)
+      " update js file
+      let encoded_lines = split(iconv(s:function_template(), &encoding, 'utf-8'), s:newline_character)
+      call writefile(encoded_lines, s:bookroot . l:bookdir . "/" . l:targetfile)
+    else
+      " new markdown file, re-generate filelist
+      call s:book_nodes(s:bookroot)
+    endif
+  elseif l:previm_mode == 4
+    call s:linked_nodes(s:linkedroot, fnamemodify(expand('%:p'), ':p'))
+  endif
 endfunction
 
 let s:default_origin_css_path = "@import url('../../_/css/origin.css');"
 let s:default_github_css_path = "@import url('../../_/css/lib/github.css');"
+let s:local_origin_css_path = "@import url('origin.css');"
+let s:local_github_css_path = "@import url('lib/github.css');"
 
 function! previm#refresh_css() abort
   let css = []
   if get(g:, 'previm_disable_default_css', 0) !=# 1
-    call extend(css, [
-          \ s:default_origin_css_path,
-          \ s:default_github_css_path
-          \ ])
+    let l:previm_mode = get(b:, 'refresh_mode', 0)
+    if l:previm_mode == 1
+      call extend(css, [
+            \ s:default_origin_css_path,
+            \ s:default_github_css_path
+            \ ])
+    elseif l:previm_mode == 2
+      call extend(css, [
+            \ s:local_origin_css_path,
+            \ s:local_github_css_path
+            \ ])
+    endif
   endif
   if exists('g:previm_custom_css_path')
     let css_path = expand(g:previm_custom_css_path)
@@ -93,23 +397,37 @@ endfunction
 
 let s:base_dir = fnamemodify(expand('<sfile>:p:h') . '/../preview', ':p')
 
+function! s:preview_base_directory() abort
+  let l:previm_mode = get(b:, 'refresh_mode', 0)
+  if l:previm_mode == 1
+    return s:base_dir
+  elseif l:previm_mode == 2
+    return fnamemodify(expand('%:p:h'), ':p')
+  else
+    return ""
+  endif
+endfunction
+
 function! s:preview_directory() abort
-  return s:base_dir . sha256(expand('%:p'))[:15] . '-' . getpid()
+  return s:preview_base_directory() . sha256(expand('%:p'))[:15] . '-' . getpid()
 endfunction
 
 function! previm#make_preview_file_path(path) abort
-  let src = s:base_dir . '/_/' . a:path
+  let l:previm_mode = get(b:, 'refresh_mode', 0)
+  let src = s:preview_base_directory() . '/_/' . a:path
   let dst = s:preview_directory() . '/' . a:path
   if !filereadable(dst)
     let dir = fnamemodify(dst, ':p:h')
-	if !isdirectory(dir)
+    if !isdirectory(dir)
       call mkdir(dir, 'p')
     endif
 
-    augroup PrevimCleanup
-      au!
-      exe printf("au VimLeave * call previm#cleanup_preview('%s')", dir)
-    augroup END
+    if l:previm_mode == 1
+      augroup PrevimCleanup
+        au!
+        exe printf("au VimLeave * call previm#cleanup_preview('%s')", dir)
+      augroup END
+    endif
     if filereadable(src)
       call s:File.copy(src, dst)
     endif
@@ -131,6 +449,7 @@ endfunction
 " その場合「.txtだが内部的なファイルタイプがmarkdown」といった場合に動かなくなる。
 " そのためVim側できちんとファイルタイプを返すようにしている。
 function! s:function_template() abort
+  let s:local_mdfiles = []
   let current_file = expand('%:p')
   return join([
       \ 'function isShowHeader() {',
@@ -154,6 +473,14 @@ function! s:function_template() abort
       \ '}',
       \ 'function getOptions() {',
       \ printf('return %s;', previm#options()),
+      \ '}',
+      \], s:newline_character)
+endfunction
+
+function! s:linked_default_template(default_file) abort
+  return join([
+      \ 'function getDefaultJs() {',
+      \ printf('return "%s";', s:escape_backslash(a:default_file)),
       \ '}',
       \], s:newline_character)
 endfunction
@@ -183,9 +510,51 @@ function! s:system(cmd) abort
   endtry
 endfunction
 
+function! s:expand_include(lines, fpath) abort
+  let l:i = 0
+  let l:lines = []
+  let l:previm_mode = get(b:, 'refresh_mode', 0)
+  let l:includeptn = get(g:, 'previm#includeptn', "<!--\\s*{%\\s\\+include\\s\\+\\(.\\{-2,}\\)\\s\\+%}\\s*-->")
+  while l:i < len(a:lines)
+    let l:pos = match(a:lines[l:i], l:includeptn)
+    if l:pos >= 0
+      let l:parts = matchlist(a:lines[l:i], l:includeptn)
+      let l:relpath = strpart(l:parts[1], 1, len(l:parts[1]) - 2)
+      if l:previm_mode == 3
+        if strpart(l:relpath[0], 0, 1) == '/'
+          let l:fullpath = s:bookroot . l:relpath
+        else
+          let l:fullpath = fnamemodify(fnamemodify(a:fpath, ':h') . '/' . l:relpath, ':p')
+        endif
+      elseif l:previm_mode == 4
+        if strpart(l:relpath[0], 0, 1) == '/'
+          let l:fullpath = s:linkedroot . l:relpath
+        else
+          let l:fullpath = fnamemodify(fnamemodify(a:fpath, ':h') . '/' . l:relpath, ':p')
+        endif
+      else
+        let l:fullpath = fnamemodify(fnamemodify(a:fpath, ':h') . '/' . l:relpath, ':p')
+      endif
+      if filereadable(l:fullpath)
+        let l:lines2 = readfile(l:fullpath)
+        let l:inner = s:expand_include(l:lines2, l:fullpath)
+        let l:inner[0] =  strpart(a:lines[l:i], 0, l:pos) . l:inner[0]
+        let l:inner[-1] = l:inner[-1] . strpart(a:lines[l:i], l:pos + len(l:parts[0]))
+        call extend(l:lines, l:inner)
+      else
+        call add(l:lines, a:lines[l:i])
+      endif
+    else
+      call add(l:lines, a:lines[l:i])
+    endif
+    let l:i = l:i + 1
+  endwhile
+  return l:lines
+endfunction
+
 function! s:do_external_parse(lines) abort
   if &filetype !=# 'rst'
-    return a:lines
+    return s:expand_include(a:lines, expand('%:p'))
   endif
   " NOTE: 本来は外部コマンドに頼りたくない
   "       いずれjsパーサーが出てきたときに移行するが、
@@ -208,18 +577,15 @@ function! s:do_external_parse(lines) abort
   endif
   let temp = tempname()
   call writefile(a:lines, temp)
-  return split(s:system(cmd . ' ' . s:escape_backslash(temp)), "\n")
+  if has('win32')
+    return split(s:system('python ' . exepath(cmd) . ' ' . s:escape_backslash(temp)), "\n")
+  else
+    return split(s:system(cmd . ' ' . s:escape_backslash(temp)), "\n")
+  endif
 endfunction
 
 function! previm#convert_to_content(lines) abort
-  let mkd_dir = s:escape_backslash(expand('%:p:h'))
-  if has('win32unix')
-    " convert cygwin path to windows path
-    let mkd_dir = substitute(system('cygpath -wa ' . mkd_dir), "\n$", '', '')
-    let mkd_dir = substitute(mkd_dir, '\', '/', 'g')
-  elseif has('win32')
-    let mkd_dir = substitute(mkd_dir, '\', '/', 'g')
-  endif
+  let mkd_dir = s:regular_filepath(expand('%:p:h'))
   let converted_lines = []
   for line in s:do_external_parse(a:lines)
     " TODO エスケープの理由と順番の依存度が複雑
@@ -275,12 +641,49 @@ function! previm#relative_to_absolute_imgpath(text, mkd_dir) abort
     let path_prefix = ''
     let local_path = local_path[7:]
   endif
-  if empty(elem.title)
-    let prev_imgpath = printf('!\[%s\](%s)', elem.alt, elem.path)
-    let new_imgpath = printf('![%s](%s%s%s)', elem.alt, path_prefix, pre_slash, local_path)
+  if path_prefix != ''
+    let l:previm_mode = get(b:, 'refresh_mode', 0)
+    let l:simple = substitute(local_path, '//', '/', 'g')
+    if l:previm_mode == 2
+        let l:previm_dir = s:preview_directory() . '/assets'
+        if !isdirectory(l:previm_dir)
+          call mkdir(l:previm_dir, 'p')
+        endif
+        let path_prefix = "assets"
+        let pre_slash = "/"
+        let local_path = split(l:simple, '/')[-1]
+        if getftime(l:simple) > getftime(l:previm_dir . "/" . local_path)
+          call s:File.copy(l:simple, l:previm_dir . "/" . local_path)
+        endif
+    elseif l:previm_mode == 3
+      let l:root = s:bookroot . "/"
+      if s:start_with(l:simple, l:root)
+        let path_prefix = ".."
+        let pre_slash = "/"
+        let local_path = strpart(l:simple, strlen(l:root))
+      endif
+    elseif l:previm_mode == 4
+      let l:root = s:linkedroot . "/"
+      if s:start_with(l:simple, l:root)
+        let path_prefix = ".."
+        let pre_slash = "/"
+        let local_path = strpart(l:simple, strlen(l:root))
+      endif
+    endif
+  endif
+  if has_key(elem, "linked")
+    let prev_imgpath = printf('\[%s\](%s)', elem.alt, elem.path)
+    let new_imgpath = s:regular_filepath(fnamemodify(local_path, ':p'))
+    call add(s:local_mdfiles, new_imgpath)
+    let new_imgpath = '<a href="javascript:change_article(''' . sha256(new_imgpath)[:15] . '.js' . ''')">' . elem.alt . '</a>'
   else
-    let prev_imgpath = printf('!\[%s\](%s "%s")', elem.alt, elem.path, elem.title)
-    let new_imgpath = printf('![%s](%s%s%s "%s")', elem.alt, path_prefix, pre_slash, local_path, elem.title)
+    if empty(elem.title)
+      let prev_imgpath = printf('!\[%s\](%s)', elem.alt, elem.path)
+      let new_imgpath = printf('![%s](%s%s%s)', elem.alt, path_prefix, pre_slash, local_path)
+    else
+      let prev_imgpath = printf('!\[%s\](%s "%s")', elem.alt, elem.path, elem.title)
+      let new_imgpath = printf('![%s](%s%s%s "%s")', elem.alt, path_prefix, pre_slash, local_path, elem.title)
+    endif
   endif
 
   " unify quote
@@ -292,7 +695,15 @@ function! previm#fetch_imgpath_elements(text) abort
   let elem = {'alt': '', 'path': '', 'title': ''}
   let matched = matchlist(a:text, '!\[\([^\]]*\)\](\([^)]*\))')
   if empty(matched)
-    return elem
+    if s:linkedroot != ""
+      let matched = matchlist(a:text, '\[\([^\]]*\)\](\([^)]*\.\(markdown\|mdown\|mkd\|mkdn\|mdwn\|md\|rst\)\))')
+      if empty(matched)
+        return elem
+      endif
+      let elem.linked = 1
+    else
+      return elem
+    endif
   endif
   let elem.alt = matched[1]
   return extend(elem, s:fetch_path_and_title(matched[2]))
@@ -324,10 +735,34 @@ function! s:echo_err(msg) abort
   echohl None
 endfunction
 
+function! s:regular_filepath(filepath) abort
+  if has('win32unix')
+    " convert cygwin path to windows path
+    let l:item = substitute(system('cygpath -wa ' . a:filepath), "\n$", '', '')
+    let l:item = substitute(l:item, '\', '/', 'g')
+  elseif has('win32')
+    let l:item = substitute(a:filepath, '\', '/', 'g')
+  endif
+  return l:item
+endfunction
+
 function! previm#wipe_cache()
   for path in filter(split(globpath(s:base_dir, '*'), "\n"), 'isdirectory(v:val) && v:val !~ "_$"')
     call previm#cleanup_preview(path)
   endfor
+  let l:previm_mode = get(b:, 'refresh_mode', 0)
+  if l:previm_mode == 2
+    call previm#cleanup_preview(s:preview_directory())
+  elseif l:previm_mode == 3
+    let l:bookdir = "/" . s:bookdir
+    call previm#cleanup_preview(s:bookroot . l:bookdir)
+  elseif l:previm_mode == 4
+    let l:linkeddir = "/" . s:linkeddir
+    call previm#cleanup_preview(s:linkedroot . l:linkeddir)
+  endif
+  let b:refresh_mode = 0
+  let s:bookroot = ""
+  let s:linkedroot = ""
 endfunction
 
 function! previm#options()
@@ -338,6 +773,27 @@ function! previm#options()
   \   'plantuml_imageprefix': get(g:, 'previm_plantuml_imageprefix', v:null)
   \ })
 endfunction
+
+func! s:rootpath(...)
+    let l:rootpattern = [".git", ".svn", ".root"]
+    if a:0 > 0
+        let l:rootpattern = l:rootpattern + a:1
+    endif
+    let l:curpath = expand("%:p:h")
+    while 1
+        for l:item in readdir(l:curpath)
+            if index(l:rootpattern, l:item) >= 0
+                return s:regular_filepath(l:curpath)
+            endif
+        endfor
+        let l:newpath = fnamemodify(l:curpath, ":h")
+        if l:newpath == l:curpath
+            return ""
+        else
+            let l:curpath = l:newpath
+        endif
+    endwhile
+endf
 
 let &cpo = s:save_cpo
 unlet! s:save_cpo

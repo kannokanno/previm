@@ -1,0 +1,185 @@
+## Previm
+
+用于实时预览标记语言文本的Vim插件。
+
+## 支持的标记语言格式
+
+* Markdown
+* reStructuredText(需要使用`rst2html.py`进行转换)
+* textile
+* AsciiDoc(Book模式不支持)
+
+## 依赖软件/插件
+
+### 文件转换
+
+需要安装`docutils`以使用其中附带的`rst2html.py`。
+
+    % pip install docutils
+
+### 调用浏览器
+
+可以选装Vim插件[open-browser.vim](https://github.com/tyru/open-browser.vim)。
+※若不安装，则需要设置`g:previm_open_cmd`来规定调用浏览器的命令。
+
+### 自动任务
+
+可以选装Vim插件[asynctasks.vim](https://github.com/skywind3000/asynctasks.vim)。
+
+※依赖Vim插件[asyncrun.vim](https://github.com/skywind3000/asyncrun.vim)。
+
+使用GIT管理目录履历时，可以添加如下的两个文件来整合`asynctasks.vim`插件。
+
+    # .gitignore
+    _build/
+
+    # .tasks
+    [auto_commit]
+    command=git add -A && git commit -m "AutoCommit"
+    cwd=$(VIM_ROOT)
+    output=terminal
+
+## 基本使用方法
+
+1. 编辑一个文件（本插件支持的文件格式，比如Markdown）
+2. 执行`:PrevimOpen`打开浏览器查看
+3. 继续在Vim中编辑文件，浏览器会实时刷新内容
+
+## 与原版[previm](https://github.com/previm/previm)的区别
+
+1. 解决Windows环境下不能转换reStructuredText文件的问题
+2. 没有开启浏览器预览时，不在后台实时生成网页表示所需的js文件（手动执行`:PrevimWipeCache`后关闭预览）
+3. 添加以下插件
+    - markdown-it-anchor
+    - markdown-it-toc-done-right
+    - markdown-it-container
+    - markdown-it-emoji
+    - markdown-it-ins
+    - markdown-it-mark
+    - markdown-it-multimd-table
+    - markdown-it-mathjax
+    - katex
+4. 添加以下模式
+    - Local模式：用于发布
+        - 命令：`:PrevimLocal`
+        - 在当前文件所在的目录中建立发布用的网页目录（原版的模式是在插件的preview目录中）
+        - 网页目录中包含所需的所有资源文件（原版的模式是在两个目录中，其中一个是公用的`preview/_`目录）
+        - 文件中涉及的本地图片文件会自动复制到网页目录中（原版的模式是使用本地文件的绝对路径）
+        - **取消**了网页的定时自动刷新功能
+    - Book模式：用于存放个人知识库
+        - 命令：`:PrevimBook`
+        - 在网页中提供根目录中所有文档的链接（按照文档目录结构制作树形列表）
+            - 根目录以`.git`、`.svn`、`.root`文件/目录所在位置确定
+            - 生成的网页目录名为：`_build`，存放在根目录中
+            - 搜索文档时，忽略根目录中以`_`开头的子目录中的所有文件
+            - 文档中涉及的本地图片文件，如果在根目录（含根目录的各级子目录）中，会转换成相对路径，否则还是采用绝对路径
+        - **取消**了对AsciiDoc格式的支持
+    - Linked模式：用于存放个人知识库
+        - 命令：`:PrevimLinked`
+        - 与Book模式功能的差异
+            - 没有树形文档列表
+            - 支持文档跳转（格式：`[xxxx](../xxx.md)`，限制：一行只能有1个跳转）
+5. 追加自定义渲染功能
+    - 命令：`:PrevimPatch`
+    - 选择网页根目录和自定义配置文件之后会修改`index.html`和`js/previm.js`文件
+        - 仅对Local模式和Book模式有效
+6. 添加include功能
+    - 格式：`{% include "相对当前文件的路径" %}`
+    - 功能：将指定文件的内容复制到这里，指定文件不存在时不处理
+    - 对于Book模式，可以用`/`开头表示相对于根目录的路径
+7. 文件头加入`[toc]`可以自动生成目录
+
+## 自定义渲染
+### 基本用法
+用于对特定段落添加自定义样式。
+``` markdown
+使用`::: @css-classname param1 param2 ...`开头，`:::`结尾。
+::: @abc 23 12
++ eaueoa
++ aaaa
+:::
+
+手动指定样式
+<style>
+<!--
+.abc {
+  color: red;
+}
+-->
+</style>
+```
+
+渲染生成的HTML代码：
+```html
+<div id="preview"><p>使用<code>::: @css-classname param1 param2 ...</code>开头，<code>:::</code>结尾。</p>
+<div class="abc" id="3" data-count="2" data-arg1="23" data-arg2="12"><ul>
+<li>eaueoa</li>
+<li>aaaa</li>
+</ul>
+</div>
+<p>手动指定样式</p>
+<style>
+<!--
+.abc {
+  color: red;
+}
+-->
+</style></div>
+```
+其中`id`是一个不重复的数字，`data-count`表示参数个数，`data-argN`表示第N个参数。
+
+### 高级用法
+对于需要自定义渲染的部分，需要定义3块内容：
+- 添加依赖的javascript文件到index.html中
+- 自定义段落规则及markdown-it的渲染函数
+- 针对markdown-it渲染结果的进一步渲染
+
+高级方法需要使用`:PrevimPatch`命令导入配置文件。配置文件示例如下：
+```text
+<script src="../_custom/svg.min.js"></script>
+<script src="../_custom/liuyao.js"></script>
+====================
+.use(_win.markdownitContainer, 'liuyao', {
+  validate: function(params) {
+    return params.trim().match(/^liuyao\s+([0-9]{10,})\s*([0-2]{5}[GLW]{3})?\s*(.*)$/);
+  },
+  render: function (tokens, idx) {
+    var m = tokens[idx].info.trim().match(/^liuyao\s+([0-9]{8})([0-9]{2,})\s*([0-2]{5}[GLW]{3})?\s*(.*)$/);
+    if (tokens[idx].nesting === 1) {
+      // opening tag
+      return '<details open><summary>' + md.utils.escapeHtml(m[4] || m[2]) + '</summary>\n<div class="liuyao" id="liuyao' + idx + '" data-date="' + m[1] + '" data-value="' + m[2] + '" data-flag="' + m[3] + '"></div>';
+    } else {
+      // closing tag
+      return '</details>\n';
+    }
+  }
+})
+--------------------
+renderLiuyao(document.body);
+```
+
+## Javascript Library
+- https://github.com/KaTeX/KaTeX  0.12.0
+- https://github.com/asciidoctor/asciidoctor.js   2.2.1
+- https://github.com/highlightjs/highlight.js 10.5.0
+- https://github.com/markdown-it/markdown-it  12.0.4
+- https://github.com/markdown-it/markdown-it-abbr 1.0.4
+- https://github.com/valeriangalliat/markdown-it-anchor   6.0.0
+- https://github.com/mcecot/markdown-it-checkbox  1.1.0
+- https://github.com/markdown-it/markdown-it-cjk-breaks   1.1.3
+- https://github.com/markdown-it/markdown-it-container    3.0.0
+- https://github.com/markdown-it/markdown-it-deflist  2.1.0
+- https://github.com/markdown-it/markdown-it-emoji    2.0.0
+- https://github.com/markdown-it/markdown-it-footnote 3.0.2
+- https://github.com/markdown-it/markdown-it-ins  3.0.1
+- https://github.com/markdown-it/markdown-it-mark 3.0.1
+- https://github.com/classeur/markdown-it-mathjax 2.0.0
+- https://github.com/RedBug312/markdown-it-multimd-table  4.0.3
+- https://github.com/markdown-it/markdown-it-sub  1.0.0
+- https://github.com/markdown-it/markdown-it-sup  1.0.0
+- https://github.com/nagaozen/markdown-it-toc-done-right  4.1.0
+- https://github.com/vuejs/vue    2.6.11
+- https://github.com/vuetifyjs/vuetify    2.2.27
+- https://github.com/borgar/textile-js    2.0.4
+- https://github.com/mermaid-js/mermaid   8.8.4
+
